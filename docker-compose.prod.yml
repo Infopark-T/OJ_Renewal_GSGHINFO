@@ -1,0 +1,92 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: jol
+      MYSQL_USER: hustoj
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Seoul
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./judge/src/install/db.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    networks:
+      - hustoj_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "hustoj", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  judge:
+    build:
+      context: ./judge
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    privileged: true
+    environment:
+      HOSTNAME: db
+      DATABASE: jol
+      USERNAME: hustoj
+      PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - judge_data:/home/judge/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hustoj_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://hustoj:${MYSQL_PASSWORD}@db/jol
+      SECRET_KEY: ${SECRET_KEY}
+      JUDGE_DATA_PATH: /judge_data
+      TZ: Asia/Seoul
+      PISTON_URL: http://piston:2000
+    volumes:
+      - judge_data:/judge_data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hustoj_net
+    # 외부 포트 미노출 — Nginx가 프록시
+
+  piston:
+    image: ghcr.io/engineer-man/piston
+    restart: unless-stopped
+    privileged: true
+    tmpfs:
+      - /piston/jobs
+    volumes:
+      - piston_packages:/piston/packages
+    networks:
+      - hustoj_net
+    # 외부 포트 미노출
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"   # 루프백만 노출, 시스템 Nginx가 앞단
+    depends_on:
+      - backend
+    networks:
+      - hustoj_net
+
+networks:
+  hustoj_net:
+    driver: bridge
+
+volumes:
+  db_data:
+  judge_data:
+  piston_packages:

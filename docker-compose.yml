@@ -1,0 +1,102 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-hustoj_root}
+      MYSQL_DATABASE: jol
+      MYSQL_USER: hustoj
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-hustoj}
+      TZ: Asia/Seoul
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./judge/src/install/db.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - hustoj_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "hustoj", "-phustoj"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  judge:
+    build:
+      context: ./judge
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    privileged: true
+    environment:
+      HOSTNAME: db
+      DATABASE: jol
+      USERNAME: hustoj
+      PASSWORD: ${MYSQL_PASSWORD:-hustoj}
+    volumes:
+      - judge_data:/home/judge/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hustoj_net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://hustoj:${MYSQL_PASSWORD:-hustoj}@db/jol
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key-in-production}
+      JUDGE_DATA_PATH: /judge_data
+      TZ: Asia/Seoul
+      PISTON_URL: http://piston:2000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - judge_data:/judge_data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - hustoj_net
+
+  piston:
+    image: ghcr.io/engineer-man/piston
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "2000:2000"
+    tmpfs:
+      - /piston/jobs
+    volumes:
+      - piston_packages:/piston/packages
+    networks:
+      - hustoj_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - hustoj_net
+
+networks:
+  hustoj_net:
+    driver: bridge
+
+volumes:
+  db_data:
+  judge_data:
+  piston_packages:
