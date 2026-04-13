@@ -319,6 +319,7 @@ end//
 delimiter ;
 
 -- 초기 관리자 계정: admin / comedu
+SET NAMES utf8mb4;
 INSERT IGNORE INTO `users`
   (user_id, email, password, nick, school, ip, reg_time, submit, solved, defunct)
 VALUES
