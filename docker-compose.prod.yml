@@ -14,7 +14,7 @@ services:
     networks:
       - hustoj_net
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "hustoj", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
       interval: 10s
       timeout: 5s
       retries: 5
