@@ -8,9 +8,20 @@
 
 ---
 
-## 설치
+## 1. 방화벽 포트 오픈
 
-서버에 SSH 접속 후 아래 명령어 한 줄 실행:
+```bash
+sudo ufw allow 22/tcp    # SSH (먼저 열어야 잠기지 않음)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+> AWS, NCP 등 클라우드 사용 시 콘솔의 **보안 그룹 인바운드 규칙**에도 80, 443 추가 필요
+
+---
+
+## 2. 설치 스크립트 실행
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Infopark-T/OJ_Renewal_GSGHINFO/main/server-setup.sh -o /tmp/setup.sh && sudo bash /tmp/setup.sh
@@ -24,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/Infopark-T/OJ_Renewal_GSGHINFO/main
 도메인이 있으면 입력하세요 (없으면 엔터 → IP로 접속):
 ```
 
-- **도메인 있으면** 입력 → SSL 인증서까지 자동 안내
+- **도메인 있으면** 입력 → Nginx + SSL 안내
 - **도메인 없으면** 엔터 → IP 주소로 바로 접속
 
 스크립트가 자동으로 처리하는 것들:
@@ -35,34 +46,60 @@ curl -fsSL https://raw.githubusercontent.com/Infopark-T/OJ_Renewal_GSGHINFO/main
 
 ---
 
-## 앱 시작
+## 3. 디렉토리 소유권 설정
 
-설치 완료 후 순서대로 실행:
+`sudo`로 설치했기 때문에 현재 유저로 소유권 변경:
 
 ```bash
-cd /opt/hustoj
+sudo chown -R $USER:$USER /opt/hustoj
+```
 
-# 1. 컨테이너 빌드 및 시작 (최초 5~10분 소요)
-docker compose -f docker-compose.prod.yml up -d --build
+> 이 작업을 해야 이후 `git pull`, `deploy.sh` 등을 sudo 없이 실행 가능
 
-# 2. 컨테이너 상태 확인
-docker compose -f docker-compose.prod.yml ps
+---
 
-# 3. Piston 코드 실행 런타임 설치 (최초 1회, 수 분 소요)
-bash piston-setup.sh
+## 4. Docker 그룹 설정 (sudo 없이 docker 사용)
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
 ---
 
-## SSL 인증서 (도메인 있는 경우)
-
-DNS가 이 서버를 가리킨 후 실행:
+## 5. 앱 빌드 및 시작
 
 ```bash
-certbot --nginx -d your.domain.com
+cd /opt/hustoj
+
+# 빌드 및 컨테이너 시작 (최초 5~10분 소요)
+sudo docker compose -f docker-compose.prod.yml up -d --build
+
+# 상태 확인 (모두 running이어야 함)
+sudo docker compose -f docker-compose.prod.yml ps
 ```
 
-이후 자동 갱신은 certbot이 알아서 처리합니다.
+---
+
+## 6. Piston 코드 실행 런타임 설치 (최초 1회)
+
+컨테이너가 모두 실행된 후:
+
+```bash
+bash /opt/hustoj/piston-setup.sh
+```
+
+Python, C/C++, Java, JavaScript 런타임이 설치됩니다.
+
+---
+
+## 7. SSL 인증서 (도메인 있는 경우)
+
+DNS가 이 서버를 가리킨 후:
+
+```bash
+sudo certbot --nginx -d your.domain.com
+```
 
 ---
 
@@ -79,36 +116,51 @@ certbot --nginx -d your.domain.com
 
 ## 업데이트
 
-새 버전 배포 시:
-
 ```bash
 cd /opt/hustoj
 bash deploy.sh
 ```
 
-코드 pull → 이미지 빌드 → 컨테이너 재시작까지 자동으로 처리됩니다.
-
 ---
 
 ## 문제 해결
 
-**컨테이너 로그 확인**
+### 컨테이너 상태 확인
 ```bash
-docker compose -f docker-compose.prod.yml logs -f
+sudo docker compose -f docker-compose.prod.yml ps
+sudo docker compose -f docker-compose.prod.yml logs -f
+sudo docker compose -f docker-compose.prod.yml logs -f backend   # 특정 서비스만
 ```
 
-**특정 서비스 로그만 보기**
+### git pull 권한 오류
 ```bash
-docker compose -f docker-compose.prod.yml logs -f backend
-docker compose -f docker-compose.prod.yml logs -f frontend
+# safe directory 오류 시
+git config --global --add safe.directory /opt/hustoj
+
+# 허가 거부 오류 시
+sudo chown -R $USER:$USER /opt/hustoj
+git pull
 ```
 
-**컨테이너 재시작**
+### 관리자 계정이 없을 때 (로그인 불가)
 ```bash
-docker compose -f docker-compose.prod.yml restart
+sudo docker compose -f docker-compose.prod.yml exec db mysql --default-character-set=utf8mb4 \
+  -u hustoj -p$(grep MYSQL_PASSWORD /opt/hustoj/.env | cut -d= -f2) jol -e "
+INSERT IGNORE INTO users (user_id, email, password, nick, school, ip, reg_time, submit, solved, defunct)
+VALUES ('admin', 'admin@localhost', 'feae84ec683153c6244ba666dda7ae8f', '관리자', '', '127.0.0.1', NOW(), 0, 0, 'N');
+INSERT IGNORE INTO privilege (user_id, rightstr, valuestr, defunct)
+VALUES ('admin', 'administrator', 'true', 'N');
+"
 ```
 
-**전체 초기화** (DB 데이터 포함 삭제 — 주의)
+### 한글이 깨져 보일 때
 ```bash
-docker compose -f docker-compose.prod.yml down -v
+sudo docker compose -f docker-compose.prod.yml exec db mysql --default-character-set=utf8mb4 \
+  -u hustoj -p$(grep MYSQL_PASSWORD /opt/hustoj/.env | cut -d= -f2) jol -e \
+  "UPDATE users SET nick='관리자' WHERE user_id='admin';"
+```
+
+### 전체 초기화 (DB 포함 — 주의)
+```bash
+sudo docker compose -f docker-compose.prod.yml down -v
 ```
